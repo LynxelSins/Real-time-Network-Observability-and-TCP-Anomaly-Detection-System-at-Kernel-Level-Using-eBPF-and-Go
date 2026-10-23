@@ -1,0 +1,13 @@
+=== eBPF TCP Anomaly Detection EDA Summary ===
+
+Generated at: 2026-10-20T01:00:31.759788
+Total Anomalies Logged: 55
+
+Latency Statistics (ms):
+  Mean:   32.77 ms
+  StdDev: 184.16 ms
+  Median: 0.08 ms
+  Min:    0.06 ms
+  Max:    1218.36 ms
+  95th %: 8.87 ms
+  99th %: 786.48 ms

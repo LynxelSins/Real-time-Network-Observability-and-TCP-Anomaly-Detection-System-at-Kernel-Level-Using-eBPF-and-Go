@@ -1,0 +1,6 @@
+Timestamp,Label,Description
+2026-10-19T16:58:50Z,NORMAL,Normal traffic baseline
+2026-10-19T16:59:03Z,HIGH_LATENCY,Injecting 100ms delay via tc
+2026-10-19T16:59:10Z,PACKET_LOSS,Injecting 10% packet loss via tc
+2026-10-19T16:59:18Z,INCOMPLETE_HANDSHAKE,Scanning closed ports
+2026-10-19T16:59:18Z,END,Experiment finished

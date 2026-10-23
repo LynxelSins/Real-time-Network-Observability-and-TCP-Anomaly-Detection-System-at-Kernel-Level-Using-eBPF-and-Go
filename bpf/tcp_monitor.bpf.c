@@ -60,20 +60,36 @@ struct sock_meta {
  */
 
 // BPF Ring Buffer: สำหรับส่งข้อมูล Event ออกไปยัง Go User Space แบบ Real-time
-// ใช้โครงสร้าง Ring Buffer แทน Perf Buffer เดิมเพื่อประสิทธิภาพที่สูงกว่า
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 256 * 1024); // บัฟเฟอร์ขนาด 256 KB
 } events SEC(".maps");
 
-// BPF Hash Map: สำหรับจำเวลาของ Socket แต่ละตัว โดยใช้ Socket pointer (skaddr) เป็น Key
+// BPF LRU Hash Map: จำเวลาของ Socket โดยอัตโนมัติ ไม่ตันเมื่อเจอ SYN Flood
+// ถ้าเต็ม Kernel จะไล่เอา entry ที่เก่าสุดออกเอง
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 10240);
     __type(key, const void *);
     __type(value, struct sock_meta);
 } sock_store SEC(".maps");
 
+// BPF Array Map สำหรับนับจำนวน Event ที่ Drop เนื่องจาก Ring Buffer เต็ม
+// index 0: State change drops, index 1: Retransmit drops
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 2);
+    __type(key, __u32);
+    __type(value, __u64);
+} drop_counters SEC(".maps");
+
+static __always_inline void inc_drop_counter(__u32 idx)
+{
+    __u64 *val = bpf_map_lookup_elem(&drop_counters, &idx);
+    if (val) {
+        __sync_fetch_and_add(val, 1);
+    }
+}
 
 /*
  * -------------------------------------------------------------
@@ -84,7 +100,7 @@ struct {
 SEC("tracepoint/sock/inet_sock_set_state")
 int trace_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
 {
-    // เราสนใจเฉพาะ IPv4 ใน Toy Model นี้เพื่อความเข้าใจง่าย (AF_INET == 2)
+    // เราสนใจเฉพาะ IPv4 (AF_INET == 2)
     if (ctx->family != 2) {
         return 0;
     }
@@ -109,13 +125,14 @@ int trace_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
             meta->established_ts = now; // บันทึกเวลาเริ่มต้นของ connection
         }
     }
-    // 3. ถ้าปิดการเชื่อมต่อ (TCP_CLOSE): คำนวณอายุของ Connection และลบข้อมูลออกจาก Map เพื่อคืนหน่วยความจำ
+    // 3. ถ้าปิดการเชื่อมต่อ (TCP_CLOSE): คำนวณอายุ Connection หรือตรวจ Incomplete Handshake
     else if (newstate == TCP_CLOSE) {
         struct sock_meta *meta = bpf_map_lookup_elem(&sock_store, &sk);
         if (meta) {
             if (meta->established_ts > 0) {
                 duration = now - meta->established_ts;
             } else if (meta->syn_ts > 0) {
+                // หลุดหรือโดน Reset ก่อน ESTABLISHED (Incomplete Handshake)
                 duration = now - meta->syn_ts;
             }
             bpf_map_delete_elem(&sock_store, &sk);
@@ -125,7 +142,8 @@ int trace_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
     // จองพื้นที่ใน Ring Buffer เพื่อเขียนข้อมูล Event
     struct tcp_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
-        // หาก Buffer เต็ม Event นี้จะถูก drop
+        // หาก Buffer เต็ม เพิ่ม Drop Counter index 0
+        inc_drop_counter(0);
         return 0;
     }
 
@@ -170,6 +188,7 @@ int trace_tcp_retransmit(struct trace_event_raw_tcp_retransmit_skb *ctx)
 
     struct tcp_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
+        inc_drop_counter(1);
         return 0;
     }
 

@@ -39,6 +39,7 @@ type bpfTcpEvent struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
+	bpfMapDropCounters           = "drop_counters"
 	bpfMapEvents                 = "events"
 	bpfMapSockStore              = "sock_store"
 	bpfProgTraceInetSockSetState = "trace_inet_sock_set_state"
@@ -96,8 +97,9 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Events    *ebpf.MapSpec `ebpf:"events"`
-	SockStore *ebpf.MapSpec `ebpf:"sock_store"`
+	DropCounters *ebpf.MapSpec `ebpf:"drop_counters"`
+	Events       *ebpf.MapSpec `ebpf:"events"`
+	SockStore    *ebpf.MapSpec `ebpf:"sock_store"`
 }
 
 // bpfVariableSpecs contains global variables before they are loaded into the kernel.
@@ -127,12 +129,14 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Events    *ebpf.Map `ebpf:"events"`
-	SockStore *ebpf.Map `ebpf:"sock_store"`
+	DropCounters *ebpf.Map `ebpf:"drop_counters"`
+	Events       *ebpf.Map `ebpf:"events"`
+	SockStore    *ebpf.Map `ebpf:"sock_store"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
+		m.DropCounters,
 		m.Events,
 		m.SockStore,
 	)
